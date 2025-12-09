@@ -1,4 +1,5 @@
 const API_ROOT = 'https://api.github.com/repos/Amne-Dev/waguri-read/contents/panels';
+const PANEL_EXTENSIONS = ['.webp', '.png'];
 const mobileQuery = window.matchMedia('(max-width: 640px)');
 
 const state = {
@@ -117,7 +118,7 @@ async function loadChapterPanels(chapter) {
 	try {
 		const payload = await fetchJSON(`${API_ROOT}/${encodeURIComponent(chapter.name)}`);
 		const panels = payload
-			.filter((entry) => entry.type === 'file' && entry.name.toLowerCase().endsWith('.webp'))
+			.filter((entry) => entry.type === 'file' && PANEL_EXTENSIONS.some((ext) => entry.name.toLowerCase().endsWith(ext)))
 			.sort((a, b) => collator.compare(a.name, b.name))
 			.map((file, index) => ({
 				order: index + 1,
@@ -126,7 +127,7 @@ async function loadChapterPanels(chapter) {
 			}));
 
 		if (!panels.length) {
-			togglePanelStatus('No .webp panels found in this chapter yet.');
+			togglePanelStatus('No panels found in this chapter yet.');
 			return;
 		}
 
