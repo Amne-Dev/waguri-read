@@ -229,13 +229,16 @@ body {
 .panel-stack {
 	display: flex;
 	flex-direction: column;
-	gap: 0;
+	gap: 15px;
+	background: #fff;
+	padding: 5px;
+	border-radius: 20px;
 }
 
 .panel-image {
 	width: 100%;
 	display: block;
-	background: #120910;
+	background: #fff;
 	border: none;
 	margin: 0;
 	object-fit: contain;
