@@ -1,5 +1,5 @@
 const API_ROOT = 'https://api.github.com/repos/Amne-Dev/waguri-read/contents/panels';
-const PANEL_EXTENSIONS = ['.webp', '.png'];
+const PANEL_EXTENSIONS = ['.webp', '.png','.jpg'];
 const mobileQuery = window.matchMedia('(max-width: 640px)');
 
 const state = {
