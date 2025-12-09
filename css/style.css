@@ -1,0 +1,336 @@
+:root {
+	--background: #d89090;
+	--text: #f4ebff;
+	--foreground: #a56868;
+	--extra: #784848;
+	--panel: rgba(24, 14, 19, 0.45);
+	--glass-border: rgba(244, 235, 255, 0.35);
+	--shadow: 0 30px 70px rgba(58, 22, 48, 0.45);
+}
+
+*, *::before, *::after {
+	box-sizing: border-box;
+}
+
+body {
+	min-height: 100vh;
+	margin: 0;
+	font-family: "SoapyHands", "Space Grotesk", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+	background: radial-gradient(circle at top, rgba(255, 255, 255, 0.25), rgba(120, 72, 72, 0.4)), var(--background);
+	color: var(--text);
+	padding: clamp(1.5rem, 4vw, 3rem);
+	position: relative;
+}
+
+.reader-haze {
+	position: fixed;
+	inset: 0;
+	background: radial-gradient(circle at 20% 20%, rgba(255, 255, 255, 0.4), transparent 45%),
+		radial-gradient(circle at 80% 0%, rgba(120, 72, 72, 0.35), transparent 40%);
+	opacity: 0.5;
+	pointer-events: none;
+	z-index: -1;
+}
+
+.reader-hero {
+	max-width: 1200px;
+	margin: 0 auto clamp(1.5rem, 4vw, 2.5rem);
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: 1.5rem;
+	flex-wrap: wrap;
+}
+
+.reader-hero h1 {
+	margin: 0.2rem 0 0.4rem;
+	font-size: clamp(2.2rem, 4vw, 3rem);
+}
+
+.reader-hero .lede {
+	max-width: 640px;
+	font-size: 1.1rem;
+	color: rgba(244, 235, 255, 0.85);
+	margin: 0;
+	line-height: 1.6;
+}
+
+.eyebrow {
+	text-transform: uppercase;
+	letter-spacing: 0.35em;
+	font-size: 0.75rem;
+	color: rgba(244, 235, 255, 0.75);
+	margin: 0 0 0.4rem;
+}
+
+.back-link {
+	border-radius: 999px;
+	padding: 0.65rem 1.5rem;
+	background: rgba(24, 14, 19, 0.35);
+	border: 1px solid var(--glass-border);
+	color: var(--text);
+	text-decoration: none;
+	font-weight: 600;
+	transition: transform 0.2s ease, border-color 0.2s ease;
+}
+
+.back-link:hover {
+	transform: translateY(-2px);
+	border-color: #fff;
+}
+
+.reader-shell {
+	max-width: 1200px;
+	margin: 0 auto;
+	display: grid;
+	grid-template-columns: minmax(240px, 320px) 1fr;
+	gap: clamp(1rem, 3vw, 2rem);
+}
+
+.chapter-column,
+.panel-column {
+	background: var(--panel);
+	border-radius: 32px;
+	border: 1px solid var(--glass-border);
+	padding: clamp(1.25rem, 3vw, 2rem);
+	box-shadow: var(--shadow);
+}
+
+.chapter-actions {
+	display: flex;
+	gap: 0.5rem;
+	flex-wrap: wrap;
+	justify-content: flex-end;
+}
+
+.chapter-current {
+	margin: 0.35rem 0 0;
+	font-size: 0.9rem;
+	color: rgba(244, 235, 255, 0.7);
+}
+
+.chapter-header,
+.panel-header {
+	display: flex;
+	justify-content: space-between;
+	gap: 1rem;
+	align-items: flex-start;
+	flex-wrap: wrap;
+	margin-bottom: 1.5rem;
+}
+
+.chapter-status,
+.panel-status {
+	border-radius: 18px;
+	border: 1px dashed rgba(244, 235, 255, 0.4);
+	padding: 1rem 1.25rem;
+	background: rgba(24, 14, 19, 0.25);
+	font-size: 0.95rem;
+	line-height: 1.5;
+	margin-bottom: 1rem;
+}
+
+.chapter-list {
+	display: flex;
+	flex-direction: column;
+	gap: 0.8rem;
+	max-height: 70vh;
+	overflow-y: auto;
+	padding-right: 0.2rem;
+}
+
+.chapter-pill {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	padding: 0.85rem 1.1rem;
+	border-radius: 18px;
+	border: 1px solid transparent;
+	background: rgba(244, 235, 255, 0.1);
+	color: inherit;
+	font-size: 1rem;
+	text-decoration: none;
+	cursor: pointer;
+	transition: border-color 0.2s ease, transform 0.2s ease, background 0.2s ease;
+}
+
+.chapter-pill:hover {
+	border-color: var(--glass-border);
+	transform: translateY(-2px);
+}
+
+.chapter-pill.active {
+	border-color: #ffe0ee;
+	background: rgba(255, 255, 255, 0.2);
+	box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+}
+
+.chapter-pill span {
+	font-size: 0.85rem;
+	color: rgba(244, 235, 255, 0.8);
+}
+
+.ghost-button {
+	border-radius: 999px;
+	border: 1px solid var(--glass-border);
+	background: transparent;
+	color: var(--text);
+	font-weight: 600;
+	padding: 0.55rem 1.4rem;
+	cursor: pointer;
+	text-decoration: none;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 0.35rem;
+	transition: border-color 0.2s ease, transform 0.2s ease;
+}
+
+.ghost-button:hover:not(:disabled) {
+	transform: translateY(-2px);
+	border-color: #fff;
+}
+
+.ghost-button:disabled {
+	opacity: 0.4;
+	cursor: not-allowed;
+}
+
+.panel-column {
+	min-height: 70vh;
+	display: flex;
+	flex-direction: column;
+}
+
+.panel-count {
+	margin: 0.35rem 0 0;
+	color: rgba(244, 235, 255, 0.75);
+}
+
+.panel-actions {
+	display: flex;
+	flex-direction: column;
+	gap: 0.8rem;
+}
+
+.panel-tools,
+.panel-nav {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.6rem;
+	align-items: center;
+}
+
+.panel-nav-bottom {
+	margin-top: 1.5rem;
+	justify-content: center;
+}
+
+.panel-stack {
+	display: flex;
+	flex-direction: column;
+	gap: 0;
+}
+
+.panel-image {
+	width: 100%;
+	display: block;
+	background: #120910;
+	border: none;
+	margin: 0;
+	object-fit: contain;
+}
+
+.chapter-column.collapsed {
+	padding-bottom: 1rem;
+}
+
+.chapter-column.collapsed .chapter-status,
+.chapter-column.collapsed .chapter-list,
+.chapter-column.collapsed #refreshChapters {
+	display: none;
+}
+
+.chapter-column.collapsed #chapterToggle {
+	width: 100%;
+}
+
+.chapter-column.collapsed .chapter-current {
+	margin-top: 0.75rem;
+}
+
+body.focus-only .reader-hero,
+body.focus-only .chapter-column,
+body.focus-only .reader-footer {
+	display: none;
+}
+
+body.focus-only .reader-shell {
+	grid-template-columns: 1fr;
+}
+
+.reader-footer {
+	max-width: 1200px;
+	margin: clamp(2rem, 5vw, 3.5rem) auto 0;
+	text-align: center;
+	font-size: 0.9rem;
+	color: rgba(244, 235, 255, 0.7);
+}
+
+@media (max-width: 960px) {
+	.reader-shell {
+		grid-template-columns: 1fr;
+	}
+
+	.chapter-list {
+		max-height: none;
+	}
+}
+
+@media (max-width: 640px) {
+	body {
+		padding: 1.25rem;
+	}
+
+	.reader-hero {
+		text-align: center;
+		justify-content: center;
+	}
+
+	.panel-actions {
+		align-items: center;
+	}
+
+	.back-link {
+		width: 100%;
+		justify-content: center;
+	}
+
+	.chapter-column,
+	.panel-column {
+		border-radius: 24px;
+	}
+
+	.panel-actions {
+		width: 100%;
+		justify-content: center;
+	}
+
+	.ghost-button,
+	.chapter-pill {
+		width: 100%;
+		justify-content: center;
+	}
+}
+
+@media (min-width: 801px) {
+	.panel-actions {
+		flex-direction: row;
+		justify-content: space-between;
+		align-items: flex-start;
+	}
+
+	.panel-nav-bottom {
+		justify-content: flex-end;
+	}
+}

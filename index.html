@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Waguri · Reader</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&display=swap"
+    />
+    <link rel="stylesheet" href="css/fonts.css" />
+    <link rel="stylesheet" href="css/style.css" />
+  </head>
+  <body>
+    <div class="reader-haze"></div>
+    <header class="reader-hero">
+      <div>
+        <p class="eyebrow">Kaoru Hana wa Rin to Saku</p>
+        <h1>Waguri Reader</h1>
+        <p class="lede">
+          Browse every uploaded chapter straight from the waguri-read panels repo.
+          Pick a chapter, scroll through the full panel stack, and stay in the Kaoruko mood the main site set.
+        </p>
+      </div>
+      <a class="back-link" href="../index.html">← Back to Waguri</a>
+    </header>
+
+    <main class="reader-shell">
+      <aside class="chapter-column" aria-expanded="true">
+        <div class="chapter-header">
+          <div>
+            <p class="eyebrow">Select</p>
+            <h2>Chapters</h2>
+            <p class="chapter-current" id="chapterCurrentLabel">No chapter selected</p>
+          </div>
+          <div class="chapter-actions">
+            <button class="ghost-button" id="chapterToggle" type="button">Hide list</button>
+            <button class="ghost-button" id="refreshChapters" type="button">Refresh</button>
+          </div>
+        </div>
+        <div class="chapter-status" id="chapterStatus">Loading chapter list…</div>
+        <div class="chapter-list" id="chapterList"></div>
+      </aside>
+
+      <section class="panel-column">
+        <div class="panel-header">
+          <div>
+            <p class="eyebrow">Currently viewing</p>
+            <h2 id="chapterTitle">Pick a chapter</h2>
+            <p class="panel-count" id="panelCount">0 panels</p>
+          </div>
+          <div class="panel-actions">
+            <div class="panel-nav" aria-label="Chapter navigation">
+              <button class="ghost-button" id="prevChapterTop" type="button">← Prev chapter</button>
+              <button class="ghost-button" id="nextChapterTop" type="button">Next chapter →</button>
+            </div>
+            <div class="panel-tools">
+              <button class="ghost-button" id="focusToggle" type="button">Focus mode</button>
+              <button class="ghost-button" id="scrollTop" type="button">Scroll to top</button>
+              <a
+                class="ghost-button"
+                href="https://github.com/Amne-Dev/waguri-read"
+                target="_blank"
+                rel="noopener"
+                >Open repo ↗</a
+              >
+            </div>
+          </div>
+        </div>
+        <div class="panel-status" id="panelStatus">Select a chapter to load all available panels.</div>
+        <div class="panel-stack" id="panelStack" aria-live="polite"></div>
+        <div class="panel-nav panel-nav-bottom" aria-label="Chapter navigation">
+          <button class="ghost-button" id="prevChapterBottom" type="button">← Prev chapter</button>
+          <button class="ghost-button" id="nextChapterBottom" type="button">Next chapter →</button>
+        </div>
+      </section>
+    </main>
+
+    <footer class="reader-footer">
+      <p>Fan-made reader · the content belongs to the official creators · stay sweet, stay dignified.</p>
+    </footer>
+
+    <script src="js/index.js" type="module"></script>
+  </body>
+</html>

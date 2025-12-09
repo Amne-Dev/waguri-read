@@ -1,0 +1,41 @@
+@font-face {
+  font-family: "SoapyHands";
+  src: url("../fonts/SS Soapy Hands Regular.otf") format("opentype");
+  font-weight: 400;
+  font-style: normal;
+}
+
+@font-face {
+  font-family: "SoapyHands";
+  src: url("../fonts/SS Soapy Hands Italic.otf") format("opentype");
+  font-weight: 400;
+  font-style: italic;
+}
+
+@font-face {
+  font-family: "SoapyHands";
+  src: url("../fonts/SS Soapy Hands Medium.otf") format("opentype");
+  font-weight: 500;
+  font-style: normal;
+}
+
+@font-face {
+  font-family: "SoapyHands";
+  src: url("../fonts/SS Soapy Hands Medium Italic.otf") format("opentype");
+  font-weight: 500;
+  font-style: italic;
+}
+
+@font-face {
+  font-family: "SoapyHands";
+  src: url("../fonts/SS Soapy Hands Bold.otf") format("opentype");
+  font-weight: 700;
+  font-style: normal;
+}
+
+@font-face {
+  font-family: "SoapyHands";
+  src: url("../fonts/SS Soapy Hands Bold Italic.otf") format("opentype");
+  font-weight: 700;
+  font-style: italic;
+}
