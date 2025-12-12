@@ -1,61 +1,45 @@
-"""Locate duplicate or nested panel images inside the panels directory."""
+"""GUI utility to scan chapters for similar panels and review them side by side."""
 
 from __future__ import annotations
 
-import argparse
-import hashlib
+import threading
+import tkinter as tk
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable, List, Sequence
+from tkinter import filedialog, messagebox, ttk
+from typing import Callable, Iterable, List, Sequence
 
 try:
-	from PIL import Image
-except ImportError as exc: # pragma: no cover - pillow required for runtime usage
-	raise SystemExit("scanner.py requires Pillow. Install it via 'pip install pillow'.") from exc
+	from PIL import Image, ImageTk
+except ImportError as exc: # pragma: no cover
+	raise SystemExit("scanner.py now requires Pillow. Install it via 'pip install pillow'.") from exc
 
-VALID_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
-CHANNELS = 3
-DEFAULT_LOG_FILE = Path(__file__).resolve().with_name("scanner.log")
+DEFAULT_ROOT = Path(__file__).resolve().parents[1] / "panels"
+VALID_EXTENSIONS = (".png", ".jpg", ".jpeg", ".webp")
+HASH_SIZE = 12
 RESAMPLE = Image.Resampling.LANCZOS
-
-
-class ScannerLogger:
-	def __init__(self, log_path: Path | None, verbose: bool = True) -> None:
-		self.log_path = log_path
-		self.verbose = verbose
-		if self.log_path:
-			self.log_path.parent.mkdir(parents=True, exist_ok=True)
-
-	def emit(self, message: str) -> None:
-		timestamp = datetime.now(timezone.utc).isoformat()
-		line = f"[{timestamp}] {message}"
-		if self.verbose:
-			print(message)
-		if self.log_path:
-			with self.log_path.open("a", encoding="utf-8") as handle:
-				handle.write(f"{line}\n")
+PREVIEW_SIZE = (420, 640)
+DIMENSION_RATIO_TOLERANCE = 0.1
 
 
 @dataclass(slots=True)
-class ImageRecord:
+class PanelInfo:
 	path: Path
 	width: int
 	height: int
-	pixel_hash: str
-	pixels: bytes
-	stride: int
-	perceptual_hash: int
-
-	@property
-	def area(self) -> int:
-		return self.width * self.height
+	hash_value: int
 
 
+@dataclass(slots=True)
+class SimilarPair:
+	left: PanelInfo
+	right: PanelInfo
+	distance: int
 
-def compute_average_hash(image: Image.Image, hash_size: int = 8) -> int:
+
+def compute_average_hash(image: Image.Image, hash_size: int = HASH_SIZE) -> int:
 	gray = image.convert("L").resize((hash_size, hash_size), RESAMPLE)
-	pixels = list(gray.getdata()) # type: ignore
+	pixels = list(gray.getdata()) # type: ignore[arg-type]
 	average = sum(pixels) / len(pixels)
 	result = 0
 	for value in pixels:
@@ -63,239 +47,302 @@ def compute_average_hash(image: Image.Image, hash_size: int = 8) -> int:
 	return result
 
 
-def load_images(
-	root: Path,
-	extensions: Sequence[str],
-	logger: ScannerLogger,
-	perceptual_hash_size: int = 8,
-) -> List[ImageRecord]:
-	records: List[ImageRecord] = []
-	for file_path in sorted(root.rglob("*")):
-		if not file_path.is_file():
-			continue
-		if file_path.suffix.lower() not in extensions:
-			continue
-		try:
-			with Image.open(file_path) as source:
-				image = source.convert("RGB")
-				pixels = image.tobytes()
-				width, height = image.size
-				perceptual_hash = compute_average_hash(image, perceptual_hash_size)
-		except OSError as error:
-			logger.emit(f"Skipping {file_path}: {error}.")
-			continue
-		stride = width * CHANNELS
-		records.append(
-			ImageRecord(
-				path=file_path,
-				width=width,
-				height=height,
-				pixel_hash=hashlib.sha256(pixels).hexdigest(),
-				pixels=pixels,
-				stride=stride,
-				perceptual_hash=perceptual_hash,
-			)
-		)
-		logger.emit(f"Loaded {file_path} ({width}x{height}).")
-	return records
-
-
-def find_exact_duplicates(records: Sequence[ImageRecord]) -> List[List[ImageRecord]]:
-	dupes: List[List[ImageRecord]] = []
-	groups: dict[tuple[int, int, str], List[ImageRecord]] = {}
-	for record in records:
-		key = (record.width, record.height, record.pixel_hash)
-		groups.setdefault(key, []).append(record)
-	for bucket in groups.values():
-		if len(bucket) > 1:
-			dupes.append(bucket)
-	return dupes
-
-
-def contains_subimage(container: ImageRecord, candidate: ImageRecord) -> bool:
-	if candidate.width > container.width or candidate.height > container.height:
-		return False
-	if candidate.width == container.width and candidate.height == container.height:
-		return False
-	big_row_stride = container.stride
-	small_row_stride = candidate.stride
-	bh = container.height
-	sh = candidate.height
-	first_row = candidate.pixels[:small_row_stride]
-	for y in range(bh - sh + 1):
-		row_start = y * big_row_stride
-		big_row = container.pixels[row_start:row_start + big_row_stride]
-		idx = big_row.find(first_row)
-		while idx != -1:
-			if idx % CHANNELS != 0:
-				idx = big_row.find(first_row, idx + 1)
-				continue
-			match = True
-			for offset in range(1, sh):
-				big_offset = row_start + offset * big_row_stride + idx
-				small_offset = offset * small_row_stride
-				segment_large = container.pixels[big_offset:big_offset + small_row_stride]
-				segment_small = candidate.pixels[small_offset:small_offset + small_row_stride]
-				if segment_large != segment_small:
-					match = False
-					break
-			if match:
-				return True
-			idx = big_row.find(first_row, idx + CHANNELS)
-	return False
-
-
-def find_contained_pairs(records: Sequence[ImageRecord]) -> List[tuple[ImageRecord, ImageRecord]]:
-	pairs: List[tuple[ImageRecord, ImageRecord]] = []
-	sorted_records = sorted(records, key=lambda rec: rec.area)
-	for index, candidate in enumerate(sorted_records):
-		for container in sorted_records[index + 1 :]:
-			if candidate.width > container.width or candidate.height > container.height:
-				continue
-			if contains_subimage(container, candidate):
-				pairs.append((candidate, container))
-	return pairs
-
-
 def hamming_distance(first: int, second: int) -> int:
 	return (first ^ second).bit_count()
 
 
-def find_perceptual_duplicates(
-	records: Sequence[ImageRecord],
+def gather_panels(chapter_path: Path, extensions: Sequence[str]) -> List[PanelInfo]:
+	records: List[PanelInfo] = []
+	for entry in sorted(chapter_path.iterdir()):
+		if not entry.is_file() or entry.suffix.lower() not in extensions:
+			continue
+		try:
+			with Image.open(entry) as src:
+				image = src.convert("RGB")
+				width, height = image.size
+				hash_value = compute_average_hash(image)
+		except OSError:
+			continue
+		records.append(PanelInfo(entry, width, height, hash_value))
+	return records
+
+
+def dimensions_close(a: PanelInfo, b: PanelInfo) -> bool:
+	width_diff = abs(a.width - b.width)
+	height_diff = abs(a.height - b.height)
+	max_width = max(a.width, b.width) or 1
+	max_height = max(a.height, b.height) or 1
+	return (
+		width_diff <= max_width * DIMENSION_RATIO_TOLERANCE
+		and height_diff <= max_height * DIMENSION_RATIO_TOLERANCE
+	)
+
+
+def find_similar_pairs(records: Sequence[PanelInfo], threshold: int) -> List[SimilarPair]:
+	pairs: List[SimilarPair] = []
+	sorted_records = sorted(records, key=lambda item: item.width * item.height)
+	count = len(sorted_records)
+	for idx in range(count):
+		left = sorted_records[idx]
+		for right in sorted_records[idx + 1 :]:
+			if not dimensions_close(left, right):
+				continue
+			distance = hamming_distance(left.hash_value, right.hash_value)
+			if distance <= threshold:
+				pairs.append(SimilarPair(left, right, distance))
+	return pairs
+
+
+def scan_repository(
+	root_path: Path,
+	extensions: Sequence[str],
 	threshold: int,
-) -> List[tuple[ImageRecord, ImageRecord, int]]:
-	if threshold <= 0:
-		return []
-	suspects: List[tuple[ImageRecord, ImageRecord, int]] = []
-	by_dimensions: dict[tuple[int, int], List[ImageRecord]] = {}
-	for record in records:
-		key = (record.width, record.height)
-		by_dimensions.setdefault(key, []).append(record)
-	for bucket in by_dimensions.values():
-		count = len(bucket)
-		if count < 2:
-			continue
-		for index in range(count):
-			left = bucket[index]
-			for right in bucket[index + 1 :]:
-				distance = hamming_distance(left.perceptual_hash, right.perceptual_hash)
-				if distance <= threshold:
-					suspects.append((left, right, distance))
-	return suspects
-
-
-def report_duplicates(duplicate_groups: Sequence[Sequence[ImageRecord]], logger: ScannerLogger) -> None:
-	if not duplicate_groups:
-		logger.emit("No pixel-perfect duplicates detected.")
-		return
-	logger.emit("Duplicate images detected (reported before any other checks):")
-	for group in duplicate_groups:
-		logger.emit("  · group start")
-		for record in group:
-			logger.emit(f"    - {record.path}")
-
-
-def report_perceptual_duplicates(
-	suspects: Sequence[tuple[ImageRecord, ImageRecord, int]],
-	logger: ScannerLogger,
-) -> None:
-	if not suspects:
-		logger.emit("No perceptual duplicates detected (allowing for text differences).")
-		return
-	logger.emit("Perceptual duplicates detected (similar art, text may differ):")
-	for left, right, distance in suspects:
-		logger.emit(
-			f"  · {left.path} <> {right.path} (hash distance {distance})"
-		)
-
-
-def report_containments(pairs: Sequence[tuple[ImageRecord, ImageRecord]], logger: ScannerLogger) -> None:
-	if not pairs:
-		logger.emit("No nested (contained) images detected.")
-		return
-	logger.emit("Nested images detected (child ⊂ parent):")
-	for child, parent in pairs:
-		logger.emit(f"  · {child.path} is contained within {parent.path}")
-
-
-def build_parser() -> argparse.ArgumentParser:
-	parser = argparse.ArgumentParser(description=__doc__)
-	parser.add_argument(
-		"root",
-		type=Path,
-		nargs="?",
-		default=Path(__file__).resolve().parents[1] / "panels",
-		help="Folder containing chapter subdirectories (defaults to repo_root/panels)",
-	)
-	parser.add_argument(
-		"--extensions",
-		default=".png,.jpg,.jpeg,.webp",
-		help="Comma-separated list of image extensions to inspect.",
-	)
-	parser.add_argument(
-		"--log-file",
-		type=Path,
-		default=DEFAULT_LOG_FILE,
-		help="Path for the verbose scan log (default: scanner.log next to this script).",
-	)
-	parser.add_argument(
-		"--quiet",
-		action="store_true",
-		help="Suppress console output (still writes to log file).",
-	)
-	parser.add_argument(
-		"--perceptual-threshold",
-		type=int,
-		default=4,
-		help=(
-			"Maximum Hamming distance between perceptual hashes to consider panels duplicates."
-		),
-	)
-	return parser
-
-
-def main(argv: Iterable[str] | None = None) -> int:
-	parser = build_parser()
-	args = parser.parse_args(argv) # type: ignore[arg-type]
-	log_path: Path | None = args.log_file
-	logger = ScannerLogger(log_path, verbose=not args.quiet)
-	if not args.root.exists():
-		logger.emit(f"Panels directory not found: {args.root}")
-		return 1
-	logger.emit(f"Scanning panels under {args.root} (chapter-by-chapter).")
-	extensions = {
-		item.strip().lower() if item.strip().startswith(".") else f".{item.strip().lower()}"
-		for item in args.extensions.split(",")
-		if item.strip()
-	}
-	if not extensions:
-		logger.emit("No extensions configured; nothing to do.")
-		return 1
-	chapter_dirs = sorted(
-		[p for p in args.root.iterdir() if p.is_dir()],
-		key=lambda path: path.name.lower(),
-	)
-	if not chapter_dirs:
-		logger.emit("No chapter folders found; scanning root contents instead.")
-		chapter_dirs = [args.root]
-	status = 0
-	for chapter in chapter_dirs:
-		logger.emit(f"\n=== Chapter scan: {chapter.relative_to(args.root.parent) if chapter != args.root else chapter} ===")
-		records = load_images(chapter, extensions, logger) # type: ignore
+	progress_cb: Callable[[str], None],
+) -> List[SimilarPair]:
+	pairs: List[SimilarPair] = []
+	chapters = sorted((p for p in root_path.iterdir() if p.is_dir()), key=lambda path: path.name.lower())
+	if not chapters:
+		chapters = [root_path]
+	for idx, chapter in enumerate(chapters, start=1):
+		progress_cb(f"Scanning {chapter.name} ({idx}/{len(chapters)})…")
+		records = gather_panels(chapter, extensions)
 		if not records:
-			logger.emit("No images detected in this chapter; skipping.")
 			continue
-		logger.emit(f"Analyzed {len(records)} images in {chapter.name}. Detecting duplicates before other checks…")
-		duplicate_groups = find_exact_duplicates(records)
-		report_duplicates(duplicate_groups, logger)
-		suspects = find_perceptual_duplicates(records, args.perceptual_threshold)
-		report_perceptual_duplicates(suspects, logger)
-		logger.emit("Proceeding to containment scan once duplicates are reported.")
-		containment_pairs = find_contained_pairs(records)
-		report_containments(containment_pairs, logger)
-	logger.emit("Scan complete.")
-	return status
+		pairs.extend(find_similar_pairs(records, threshold))
+	progress_cb(f"Scan complete: {len(pairs)} similar pair(s) found.")
+	return pairs
+
+
+class ScannerApp:
+	def __init__(self) -> None:
+		self.root = tk.Tk()
+		self.root.title("Panel Similarity Scanner")
+		self.root.geometry("1280x800")
+		self.root.minsize(1100, 720)
+
+		self.root_path_var = tk.StringVar(value=str(DEFAULT_ROOT))
+		self.threshold_var = tk.IntVar(value=4)
+		self.status_var = tk.StringVar(value="Idle.")
+
+		self.duplicate_pairs: List[SimilarPair] = []
+		self.left_preview: ImageTk.PhotoImage | None = None
+		self.right_preview: ImageTk.PhotoImage | None = None
+		self.scan_thread: threading.Thread | None = None
+
+		self._build_ui()
+
+	def _build_ui(self) -> None:
+		self.root.columnconfigure(1, weight=1)
+		self.root.rowconfigure(1, weight=1)
+
+		controls = ttk.Frame(self.root, padding=12)
+		controls.grid(row=0, column=0, columnspan=2, sticky="ew")
+		controls.columnconfigure(1, weight=1)
+
+		ttk.Label(controls, text="Panels folder:").grid(row=0, column=0, sticky="w")
+		path_entry = ttk.Entry(controls, textvariable=self.root_path_var)
+		path_entry.grid(row=0, column=1, sticky="ew", padx=6)
+		ttk.Button(controls, text="Browse", command=self._choose_directory).grid(row=0, column=2)
+
+		ttk.Label(controls, text="Similarity threshold (lower = stricter):").grid(row=1, column=0, sticky="w", pady=(8, 0))
+		threshold_spin = ttk.Spinbox(
+			controls,
+			from_=1,
+			to=32,
+			textvariable=self.threshold_var,
+			width=6,
+		)
+		threshold_spin.grid(row=1, column=1, sticky="w", padx=6, pady=(8, 0))
+
+		self.scan_button = ttk.Button(controls, text="Start Scan", command=self._start_scan)
+		self.scan_button.grid(row=1, column=2, padx=4, pady=(8, 0))
+
+		self.status_label = ttk.Label(controls, textvariable=self.status_var)
+		self.status_label.grid(row=2, column=0, columnspan=3, sticky="w", pady=(8, 0))
+
+		list_frame = ttk.Frame(self.root, padding=12)
+		list_frame.grid(row=1, column=0, sticky="nsw")
+		list_frame.rowconfigure(1, weight=1)
+		list_frame.columnconfigure(0, weight=1)
+
+		ttk.Label(list_frame, text="Detected Similar Pairs").grid(row=0, column=0, sticky="w")
+		scrollbar = ttk.Scrollbar(list_frame, orient="vertical")
+		self.pair_listbox = tk.Listbox(
+			list_frame,
+			height=30,
+			width=45,
+			exportselection=False,
+			yscrollcommand=scrollbar.set,
+		)
+		scrollbar.config(command=self.pair_listbox.yview)
+		self.pair_listbox.grid(row=1, column=0, sticky="nsew", pady=6)
+		scrollbar.grid(row=1, column=1, sticky="ns")
+		self.pair_listbox.bind("<<ListboxSelect>>", self._on_pair_select)
+
+		preview = ttk.Frame(self.root, padding=12)
+		preview.grid(row=1, column=1, sticky="nsew")
+		preview.columnconfigure((0, 1), weight=1)
+		preview.rowconfigure(1, weight=1)
+
+		self.left_image_label = ttk.Label(preview, text="Original Panel", anchor="center")
+		self.left_image_label.grid(row=0, column=0, sticky="ew")
+		self.right_image_label = ttk.Label(preview, text="Potential Duplicate", anchor="center")
+		self.right_image_label.grid(row=0, column=1, sticky="ew")
+
+		self.left_canvas = ttk.Label(preview, relief="sunken")
+		self.left_canvas.grid(row=1, column=0, padx=6, pady=6, sticky="nsew")
+		self.right_canvas = ttk.Label(preview, relief="sunken")
+		self.right_canvas.grid(row=1, column=1, padx=6, pady=6, sticky="nsew")
+
+		button_bar = ttk.Frame(preview)
+		button_bar.grid(row=2, column=0, columnspan=2, pady=(8, 0))
+		self.keep_left_button = ttk.Button(button_bar, text="Keep Left (Delete Right)", command=lambda: self._resolve_pair("right"))
+		self.keep_left_button.grid(row=0, column=0, padx=6)
+		self.keep_right_button = ttk.Button(button_bar, text="Keep Right (Delete Left)", command=lambda: self._resolve_pair("left"))
+		self.keep_right_button.grid(row=0, column=1, padx=6)
+		self._update_action_buttons()
+
+	def _choose_directory(self) -> None:
+		selection = filedialog.askdirectory(title="Select panels directory", initialdir=self.root_path_var.get())
+		if selection:
+			self.root_path_var.set(selection)
+
+	def _start_scan(self) -> None:
+		if self.scan_thread and self.scan_thread.is_alive():
+			return
+		root_path = Path(self.root_path_var.get()).expanduser()
+		if not root_path.exists():
+			messagebox.showerror("Path not found", f"Directory does not exist:\n{root_path}")
+			return
+		threshold = max(1, min(32, self.threshold_var.get()))
+		self.threshold_var.set(threshold)
+		self.duplicate_pairs.clear()
+		self._clear_listbox()
+		self._clear_previews()
+		self.status_var.set("Starting scan…")
+		self.scan_button.config(state=tk.DISABLED)
+
+		def progress_cb(message: str) -> None:
+			self.root.after(0, lambda: self.status_var.set(message))
+
+		def worker() -> None:
+			try:
+				pairs = scan_repository(root_path, VALID_EXTENSIONS, threshold, progress_cb)
+			except Exception as error: # pragma: no cover - GUI feedback path
+				self.root.after(0, lambda: self._on_scan_failed(error))
+				return
+			self.root.after(0, lambda: self._on_scan_complete(pairs))
+
+		self.scan_thread = threading.Thread(target=worker, daemon=True)
+		self.scan_thread.start()
+
+	def _on_scan_failed(self, error: Exception) -> None:
+		self.scan_button.config(state=tk.NORMAL)
+		self.status_var.set("Scan failed. See console for details.")
+		messagebox.showerror("Scan failed", str(error))
+
+	def _on_scan_complete(self, pairs: List[SimilarPair]) -> None:
+		self.scan_button.config(state=tk.NORMAL)
+		self.duplicate_pairs = [pair for pair in pairs if pair.left.path.exists() and pair.right.path.exists()]
+		for index, pair in enumerate(self.duplicate_pairs, start=1):
+			label = f"{index}. {pair.left.path.name} ↔ {pair.right.path.name} (dist={pair.distance})"
+			self.pair_listbox.insert(tk.END, label)
+		count = len(self.duplicate_pairs)
+		message = "No similar panels detected." if count == 0 else f"Scan complete: {count} pair(s) ready for review."
+		self.status_var.set(message)
+		if count > 0:
+			self.pair_listbox.selection_set(0)
+			self._on_pair_select()
+		self._update_action_buttons()
+
+	def _clear_listbox(self) -> None:
+		self.pair_listbox.delete(0, tk.END)
+
+	def _clear_previews(self) -> None:
+		self.left_canvas.config(image="", text="")
+		self.right_canvas.config(image="", text="")
+		self.left_preview = None
+		self.right_preview = None
+
+	def _on_pair_select(self, event: tk.Event | None = None) -> None: # type: ignore[override]
+		selection = self.pair_listbox.curselection()
+		if not selection:
+			self._clear_previews()
+			self._update_action_buttons()
+			return
+		index = selection[0]
+		if index >= len(self.duplicate_pairs):
+			return
+		pair = self.duplicate_pairs[index]
+		self.left_preview = self._load_preview(pair.left.path)
+		self.right_preview = self._load_preview(pair.right.path)
+		left_image: ImageTk.PhotoImage | str = self.left_preview if self.left_preview is not None else ""
+		right_image: ImageTk.PhotoImage | str = self.right_preview if self.right_preview is not None else ""
+		self.left_canvas.config(image=left_image, text=str(pair.left.path))
+		self.right_canvas.config(image=right_image, text=str(pair.right.path))
+		self._update_action_buttons()
+
+	def _load_preview(self, path: Path) -> ImageTk.PhotoImage | None:
+		if not path.exists():
+			return None
+		try:
+			with Image.open(path) as img:
+				preview = img.copy()
+				preview.thumbnail(PREVIEW_SIZE, RESAMPLE)
+		except OSError:
+			return None
+		return ImageTk.PhotoImage(preview)
+
+	def _resolve_pair(self, delete_side: str) -> None:
+		selection = self.pair_listbox.curselection()
+		if not selection:
+			return
+		index = selection[0]
+		if index >= len(self.duplicate_pairs):
+			return
+		pair = self.duplicate_pairs[index]
+		target = pair.left.path if delete_side == "left" else pair.right.path
+		if not target.exists():
+			messagebox.showwarning("File missing", f"{target} no longer exists.")
+			self._remove_pair_at(index)
+			return
+		if not messagebox.askyesno("Confirm delete", f"Delete {target.name}? This cannot be undone."):
+			return
+		try:
+			target.unlink()
+		except OSError as error:
+			messagebox.showerror("Delete failed", f"Could not delete {target}: {error}")
+			return
+		self.status_var.set(f"Deleted {target.name}.")
+		self._remove_pair_at(index)
+
+	def _remove_pair_at(self, index: int) -> None:
+		if index >= len(self.duplicate_pairs):
+			return
+		self.duplicate_pairs.pop(index)
+		self.pair_listbox.delete(index)
+		if self.duplicate_pairs:
+			new_index = min(index, len(self.duplicate_pairs) - 1)
+			self.pair_listbox.selection_set(new_index)
+			self._on_pair_select()
+		else:
+			self._clear_previews()
+		self._update_action_buttons()
+
+	def _update_action_buttons(self) -> None:
+		has_selection = bool(self.pair_listbox.curselection())
+		state = tk.NORMAL if has_selection else tk.DISABLED
+		self.keep_left_button.config(state=state)
+		self.keep_right_button.config(state=state)
+
+	def run(self) -> None:
+		self.root.mainloop()
+
+
+def main(_: Iterable[str] | None = None) -> int:
+	app = ScannerApp()
+	app.run()
+	return 0
 
 
 if __name__ == "__main__":
