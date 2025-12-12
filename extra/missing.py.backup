@@ -16,8 +16,6 @@ VALID_EXTENSIONS = {".webp", ".png", ".jpg", ".jpeg"}
 NUMBER_PATTERN = re.compile(r"(\d+)")
 CHAPTER_PATTERN = re.compile(r"chapter\s*(\d+)", re.IGNORECASE)
 VOLUME_PATTERN = re.compile(r"volume\s*\d+", re.IGNORECASE)
-DEFAULT_LAST_FILE = Path(__file__).resolve().parents[1] / "last.txt"
-USER_AGENT = "waguri-missing-panels/1.0"
 DEFAULT_DOWNLOAD_BASE = (
 	"https://eu2.contabostorage.com/2352a0b47a16442aa2bd93b0a47735ea:manga/"
 	"fragrant/Chapter%20{chapter}/{panel}.jpg"
@@ -151,7 +149,6 @@ def analyze_panels(
 	chapter_pad: int = 3,
 	panel_pad: int = 2,
 	log_path: Path | None = None,
-	last_file: Path | None = DEFAULT_LAST_FILE,
 ) -> int:
 	if not panels_root.is_dir():
 		print(f"Panels directory not found: {panels_root}")
@@ -180,7 +177,6 @@ def analyze_panels(
 			chapter_pad=chapter_pad,
 			panel_pad=panel_pad,
 			log_path=log_path,
-			last_file=last_file,
 		)
 	return 0
 
@@ -243,15 +239,6 @@ def render_progress_bar(completed: int, total: int, width: int = 40) -> str:
 	return f"[{bar}] {completed}/{total}"
 
 
-def prompt_yes_no(message: str) -> bool:
-	"""Prompt the user for a yes/no confirmation; defaults to no on EOF."""
-	try:
-		response = input(message)
-	except EOFError:
-		return False
-	return response.strip().lower() in {"y", "yes"}
-
-
 def normalize_chapter_token_for_url(token: str) -> str:
 	"""Drop leading zeros for chapter tokens; keep at least a single digit."""
 	stripped = token.lstrip("0")
@@ -265,142 +252,6 @@ def normalize_panel_token_for_url(token: str) -> str:
 	return token
 
 
-def probe_remote_panel(url: str) -> tuple[bool, bool]:
-	req = Request(url, headers={"User-Agent": USER_AGENT})
-	try:
-		with urlopen(req) as response:
-			response.read(1)
-		return True, False
-	except HTTPError as error:
-		return False, error.code == 403
-	except URLError:
-		return False, False
-
-
-def discover_trailing_panels(
-	report: ChapterReport,
-	chapter_token_for_url: str,
-	chapter_number: int,
-	panel_pad: int,
-	attempt_templates: Sequence[tuple[str, str]],
-	log_path: Path | None,
-) -> List[int]:
-	trailing: List[int] = []
-	if report.max_panel is None:
-		return trailing
-	panel = report.max_panel + 1
-	while True:
-		panel_token = str(panel).zfill(panel_pad)
-		panel_token_for_url = normalize_panel_token_for_url(panel_token)
-		last_forbidden = True
-		found = False
-		for attempt_index, (template, _) in enumerate(attempt_templates):
-			if attempt_index > 0 and not last_forbidden:
-				break
-			raw_url = template.format(
-				chapter=chapter_token_for_url,
-				panel=panel_token_for_url,
-				chapter_raw=chapter_number,
-				panel_raw=panel,
-			)
-			request_url = encode_url_for_request(raw_url)
-			success, forbidden = probe_remote_panel(request_url)
-			status = "TRAILING_FOUND" if success else ("FORBIDDEN" if forbidden else "TRAILING_MISSING")
-			log_download_event(
-				log_path,
-				f"{report.name} trailing panel {panel_token} -> {status} | {raw_url}",
-			)
-			if success:
-				found = True
-				break
-			last_forbidden = forbidden
-		if found:
-			trailing.append(panel)
-			print(f"  · Found trailing panel candidate {panel_token} (remote only).")
-			panel += 1
-		else:
-			break
-	return trailing
-
-
-def write_trailing_panels_report(path: Path | None, mapping: dict[str, List[int]]) -> None:
-	if not path:
-		return
-	path.parent.mkdir(parents=True, exist_ok=True)
-	with path.open("w", encoding="utf-8") as handle:
-		if not mapping:
-			handle.write("No trailing panels discovered.\n")
-			return
-		for chapter_name in sorted(mapping.keys()):
-			panels = ", ".join(map(str, mapping[chapter_name]))
-			handle.write(f"{chapter_name}: {panels}\n")
-
-
-def download_trailing_candidates(
-	trailing_map: dict[str, List[int]],
-	reports_by_name: dict[str, ChapterReport],
-	attempt_templates: Sequence[tuple[str, str]],
-	extension_pool: set[str],
-	chapter_pad: int,
-	panel_pad: int,
-	log_path: Path | None,
-) -> int:
-	downloading_total = 0
-	for chapter_name, panels in list(trailing_map.items()):
-		report = reports_by_name.get(chapter_name)
-		if not report:
-			continue
-		chapter_number = extract_chapter_number(report.name)
-		if chapter_number is None:
-			print(f"  · Unable to infer chapter number for {chapter_name}; skipping trailing download.")
-			continue
-		chapter_token = str(chapter_number).zfill(chapter_pad)
-		chapter_token_for_url = normalize_chapter_token_for_url(chapter_token)
-		print(f"\nDownloading trailing panels for {chapter_name}")
-		remaining: List[int] = []
-		for panel in panels:
-			panel_token = str(panel).zfill(panel_pad)
-			if any((report.path / f"{panel_token}{ext}").exists() for ext in extension_pool):
-				print(f"  · Trailing panel {panel_token} already exists locally; skipping.")
-				continue
-			panel_token_for_url = normalize_panel_token_for_url(panel_token)
-			last_forbidden = True
-			success = False
-			for attempt_index, (template, extension) in enumerate(attempt_templates):
-				if attempt_index > 0 and not last_forbidden:
-					break
-				destination = report.path / f"{panel_token}{extension}"
-				if attempt_index > 0:
-					label = extension.lstrip('.') or extension
-					print(f"  · Retrying trailing panel as {label.upper()} fallback…")
-				raw_url = template.format(
-					chapter=chapter_token_for_url,
-					panel=panel_token_for_url,
-					chapter_raw=chapter_number,
-					panel_raw=panel,
-				)
-				request_url = encode_url_for_request(raw_url)
-				ok, forbidden = fetch_file(request_url, destination)
-				status = "SUCCESS" if ok else ("FORBIDDEN" if forbidden else "FAILURE")
-				log_download_event(
-					log_path,
-					f"{chapter_name} trailing panel {panel_token} ({destination.name}) -> {status} | {raw_url}",
-				)
-				if ok:
-					print(f"    ✓ Trailing panel {panel_token} saved as {destination.name}.")
-					success = True
-					downloading_total += 1
-					break
-				last_forbidden = forbidden
-			if not success:
-				remaining.append(panel)
-		if remaining:
-			trailing_map[chapter_name] = remaining
-		else:
-			trailing_map.pop(chapter_name, None)
-	return downloading_total
-
-
 def download_missing_panels(
 	reports: Sequence[ChapterReport],
 	base_url: str,
@@ -408,7 +259,6 @@ def download_missing_panels(
 	chapter_pad: int,
 	panel_pad: int,
 	log_path: Path | None = None,
-	last_file: Path | None = None,
 ) -> dict[str, List[int]]:
 	total_targets = sum(len(report.missing) for report in reports)
 	if total_targets == 0:
@@ -423,91 +273,55 @@ def download_missing_panels(
 		for template in fallback_base_urls
 	)
 	extension_pool = {ext for _, ext in attempt_templates}
-	reports_by_name = {report.name: report for report in reports}
 	failures: dict[str, List[int]] = {}
-	trailing_map: dict[str, List[int]] = {}
 	for report in reports:
+		if not report.missing:
+			continue
 		chapter_number = extract_chapter_number(report.name)
+		print(f"\nDownloading missing panels for {report.name}")
 		if chapter_number is None:
-			if report.missing:
-				print(f"\n{report.name}")
-				print("  · Could not infer chapter number from folder name; skipping downloads.")
-				failures[report.name] = report.missing.copy()
-			else:
-				print(f"\n{report.name}")
-				print("  · Could not infer chapter number; trailing scan skipped.")
+			print("  · Could not infer chapter number from folder name; skipping.")
+			failures[report.name] = report.missing.copy()
 			continue
 		chapter_token = str(chapter_number).zfill(chapter_pad)
 		chapter_token_for_url = normalize_chapter_token_for_url(chapter_token)
-		if report.missing:
-			print(f"\nDownloading missing panels for {report.name}")
-			for panel in report.missing:
-				panel_token = str(panel).zfill(panel_pad)
-				if any((report.path / f"{panel_token}{ext}").exists() for ext in extension_pool):
-					print(f"  · Skipping {panel_token} (already exists).")
-					continue
-				panel_token_for_url = normalize_panel_token_for_url(panel_token)
-				last_forbidden = True
-				attempt_failed = True
-				for attempt_index, (template, extension) in enumerate(attempt_templates):
-					if attempt_index > 0 and not last_forbidden:
-						break
-					destination = report.path / f"{panel_token}{extension}"
-					if attempt_index > 0:
-						label = extension.lstrip('.') or extension
-						print(f"  · Retrying as {label.upper()} fallback…")
-					raw_url = template.format(
-						chapter=chapter_token_for_url,
-						panel=panel_token_for_url,
-						chapter_raw=chapter_number,
-						panel_raw=panel,
-					)
-					request_url = encode_url_for_request(raw_url)
-					success, forbidden = fetch_file(request_url, destination)
-					status = "SUCCESS" if success else ("FORBIDDEN" if forbidden else "FAILURE")
-					log_download_event(
-						log_path,
-						f"{report.name} panel {panel_token} ({destination.name}) -> {status} | {raw_url}",
-					)
-					if success:
-						success_count += 1
-						print(f"    ✓ Panel {panel_token} saved as {destination.name}.")
-						attempt_failed = False
-						break
-					last_forbidden = forbidden
-				if attempt_failed:
-					failures.setdefault(report.name, []).append(panel)
-		trailing = discover_trailing_panels(
-			report,
-			chapter_token_for_url,
-			chapter_number,
-			panel_pad,
-			attempt_templates,
-			log_path,
-		)
-		if trailing:
-			trailing_map[report.name] = trailing
-	if trailing_map:
-		print("\nTrailing panel candidates detected:")
-		for chapter_name, panels in trailing_map.items():
-			print(f"  · {chapter_name}: {', '.join(map(str, panels))}")
-		if prompt_yes_no("Download these trailing panels now? [y/N]: "):
-			additional = download_trailing_candidates(
-				trailing_map,
-				reports_by_name,
-				attempt_templates,
-				extension_pool,
-				chapter_pad,
-				panel_pad,
-				log_path,
-			)
-			if additional:
-				print(f"  Trailing panels downloaded: {additional}")
-		else:
-			print("  Skipping trailing panel download for now.")
-	if total_targets == 0:
-		print("\nNo missing panels need downloading.")
-	elif failures:
+		for panel in report.missing:
+			panel_token = str(panel).zfill(panel_pad)
+			if any((report.path / f"{panel_token}{ext}").exists() for ext in extension_pool):
+				print(f"  · Skipping {panel_token} (already exists).")
+				continue
+			panel_token_for_url = normalize_panel_token_for_url(panel_token)
+			last_forbidden = True
+			attempt_failed = True
+			for attempt_index, (template, extension) in enumerate(attempt_templates):
+				if attempt_index > 0 and not last_forbidden:
+					break
+				destination = report.path / f"{panel_token}{extension}"
+				if attempt_index > 0:
+					label = extension.lstrip('.') or extension
+					print(f"  · Retrying as {label.upper()} fallback…")
+				raw_url = template.format(
+					chapter=chapter_token_for_url,
+					panel=panel_token_for_url,
+					chapter_raw=chapter_number,
+					panel_raw=panel,
+				)
+				request_url = encode_url_for_request(raw_url)
+				success, forbidden = fetch_file(request_url, destination)
+				status = "SUCCESS" if success else ("FORBIDDEN" if forbidden else "FAILURE")
+				log_download_event(
+					log_path,
+					f"{report.name} panel {panel_token} ({destination.name}) -> {status} | {raw_url}",
+				)
+				if success:
+					success_count += 1
+					print(f"    ✓ Panel {panel_token} saved as {destination.name}.")
+					attempt_failed = False
+					break
+				last_forbidden = forbidden
+			if attempt_failed:
+				failures.setdefault(report.name, []).append(panel)
+	if failures:
 		print("\nDownload failures detected:")
 		for chapter_name, missing_panels in failures.items():
 			print(f"  · {chapter_name}: {', '.join(map(str, missing_panels))}")
@@ -516,19 +330,11 @@ def download_missing_panels(
 	print("\nProgress summary:")
 	print(f"  {render_progress_bar(success_count, total_targets)}")
 	print(f"  Successful downloads: {success_count}/{total_targets}")
-	write_trailing_panels_report(last_file, trailing_map)
-	if last_file:
-		if trailing_map:
-			print(f"  Trailing panel report written to {last_file}.")
-		else:
-			print("  No trailing panels discovered; last.txt updated accordingly.")
-	elif trailing_map:
-		print("  Trailing panels detected but no last.txt path configured to record them.")
 	return failures
 
 
 def fetch_file(url: str, destination: Path) -> tuple[bool, bool]:
-	req = Request(url, headers={"User-Agent": USER_AGENT})
+	req = Request(url, headers={"User-Agent": "waguri-missing-panels/1.0"})
 	try:
 		with urlopen(req) as response, destination.open("wb") as output:
 			chunk = response.read(8192)
@@ -602,14 +408,6 @@ def build_arg_parser() -> argparse.ArgumentParser:
 		type=Path,
 		help="Optional path for a download log file (defaults to panels_root/missing_panels.log).",
 	)
-	parser.add_argument(
-		"--last-file",
-		type=Path,
-		default=DEFAULT_LAST_FILE,
-		help=(
-			"Path to write trailing panel candidates (last.txt). Defaults to repo root last.txt."
-		),
-	)
 	return parser
 
 
@@ -627,7 +425,6 @@ def main(argv: Iterable[str] | None = None) -> int:
 		chapter_pad=args.chapter_pad,
 		panel_pad=args.panel_pad,
 		log_path=log_path if args.download_missing else None,
-		last_file=args.last_file,
 	)
 
 
